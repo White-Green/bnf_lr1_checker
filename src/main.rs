@@ -1,201 +1,145 @@
 use clap::{crate_authors, crate_description, crate_name, crate_version, Arg};
 use parser::enum_index::EnumIndex;
-use parser::enum_index_derive::EnumIndex;
-use parser::{enum_index, LR1Parser, Parse, Rule, Syntax};
-use parser_generator::parser;
-use std::collections::BTreeMap;
+use parser::{LR1Parser, Rule, Syntax};
+use std::collections::HashMap;
 use std::error::Error;
-use std::fmt::{Display, Formatter};
-use std::{fs, mem};
-use tokenizer::Tokenize;
-use tokenizer_generator::tokenizer;
+use std::fs;
+use std::hash::Hash;
+use syn::parse::{Parse, ParseStream};
+use syn::{bracketed, token, Expr, Ident, LitStr, Pat, Token};
 
-#[derive(Debug, EnumIndex)]
-pub enum Token {
-    Token(String),
-    Symbol(String),
-    Or,
-    Eq,
-    Line,
-    Error,
+mod kw {
+    syn::custom_keyword!(ERROR);
 }
 
-#[derive(Debug)]
-pub enum RuleItem {
-    Token(String),
-    Symbol(String),
-    Error,
+#[derive(Debug, Clone, Eq, PartialEq, Hash)]
+enum TokenKey {
+    Named(String),
+    Raw(String),
 }
 
-impl<'a> From<&'a Token> for RuleItem {
-    fn from(token: &Token) -> Self {
-        match token {
-            Token::Token(s) => RuleItem::Token(s.clone()),
-            Token::Symbol(s) => RuleItem::Symbol(s.clone()),
-            Token::Error => RuleItem::Error,
-            _ => panic!(),
+impl Parse for TokenKey {
+    fn parse(input: ParseStream) -> syn::Result<Self> {
+        if input.peek(LitStr) {
+            let s: LitStr = input.parse()?;
+            Ok(TokenKey::Raw(s.value()))
+        } else {
+            let s: Ident = input.parse()?;
+            Ok(TokenKey::Named(s.to_string()))
         }
     }
 }
 
-tokenizer! {
-    character char;
-    token Option<Token>;
-    "<\\w+>": (|s, _| Some(Token::Symbol(s[1..s.len() - 1].to_string())));
-    "\\[\\w+\\]": (|s, _| Some(Token::Token(s[1..s.len() - 1].to_string())));
-    "\"(\\\\(n|t|x[0-9a-fA-F]{2}|u\\{[0-9a-fA-F]{1,6}\\}|\\\\|\")|[^\\\\\"\n])*\"": (|s, _| Some(Token::Token(parse_string_literal(s).unwrap())));
-    "\\|": (|_, _| Some(Token::Or));
-    "::=": (|_, _| Some(Token::Eq));
-    "\\n": (|_, _| Some(Token::Line));
-    "[eE][rR][rR][oO][rR]": (|_, _| Some(Token::Error));
-    "\\s": (|_, _| None);
-    // ".|\n": (|s, _|{dbg!(s); None})
+enum BNFTerminalSymbol {
+    Named { _bracket: token::Bracket, name: Ident },
+    Raw(LitStr),
 }
 
-fn parse_string_literal(s: &str) -> Option<String> {
-    let mut iter = s[1..s.len() - 1].chars();
-    let mut result = String::with_capacity(s.len());
-    while let Some(c) = iter.next() {
-        if c != '\\' {
-            result.push(c);
-            continue;
-        }
-        match iter.next() {
-            Some('n') => result.push('\n'),
-            Some('t') => result.push('\t'),
-            Some('\\') => result.push('\\'),
-            Some('\"') => result.push('\"'),
-            Some('x') => {
-                let c = iter.by_ref().take(2).fold(0, |acc, c| {
-                    acc << 4
-                        | c.to_digit(16)
-                            .expect("事前にとーくないざの正規表現で確認してるのであんりーちゃぶる")
-                });
-                result.push(char::from_u32(c).expect("16進2桁なのであんりーちゃぶる"));
-            }
-            Some('u') => {
-                let c = iter
-                    .by_ref()
-                    .skip(1)
-                    .take_while(|c| *c != '}')
-                    .fold(0, |acc, c| {
-                        acc << 4
-                            | c.to_digit(16).expect(
-                                "事前にとーくないざの正規表現で確認してるのであんりーちゃぶる",
-                            )
-                    });
-                result.push(char::from_u32(c)?);
-            }
-            _ => unreachable!("事前にとーくないざの正規表現で確認してるのであんりーちゃぶる"),
-        }
-    }
-    result.shrink_to_fit();
-    Some(result)
-}
-
-#[derive(Debug, EnumIndex)]
-pub enum Symbol {
-    Rules(Vec<(String, Vec<RuleItem>)>),
-    Rule(String, Vec<Vec<RuleItem>>),
-    RuleItem(Vec<RuleItem>),
-}
-
-#[derive(Debug)]
-pub enum NoneError {}
-
-impl Display for NoneError {
-    fn fmt(&self, _: &mut Formatter<'_>) -> std::fmt::Result {
-        match self {
-            _ => unreachable!(),
+impl Parse for BNFTerminalSymbol {
+    fn parse(input: ParseStream) -> syn::Result<Self> {
+        if input.peek(token::Bracket) {
+            let name;
+            Ok(BNFTerminalSymbol::Named { _bracket: bracketed!(name in input), name: name.parse()? })
+        } else {
+            Ok(BNFTerminalSymbol::Raw(input.parse()?))
         }
     }
 }
 
-impl Error for NoneError {}
+enum BNFSymbol {
+    Terminal(BNFTerminalSymbol),
+    NonTerminal { _open: Token![<], name: Ident, _close: Token![>] },
+    Error(kw::ERROR),
+}
 
-parser! {
-    token Token {
-        Token(Default::default(),),
-        Symbol(Default::default(),),
-        Or,
-        Eq,
-        Line,
-        Error,
+impl Parse for BNFSymbol {
+    fn parse(input: ParseStream) -> syn::Result<Self> {
+        if input.peek(Token![<]) {
+            Ok(BNFSymbol::NonTerminal { _open: input.parse()?, name: input.parse()?, _close: input.parse()? })
+        } else if input.peek(kw::ERROR) {
+            Ok(BNFSymbol::Error(input.parse()?))
+        } else {
+            Ok(BNFSymbol::Terminal(input.parse()?))
+        }
     }
-    symbol Symbol {
-        Rules(Default::default(),),
-        Rule(Default::default(), Default::default(),),
-        RuleItem(Default::default(),)
+}
+
+enum BNFRuleKey {
+    Named { _open: Token![<], name: Ident, _close: Token![>], _eq1: Token![::], _eq2: Token![=] },
+    Follow(Token![|]),
+}
+
+impl Parse for BNFRuleKey {
+    fn parse(input: ParseStream) -> syn::Result<Self> {
+        if input.peek(Token![<]) {
+            Ok(BNFRuleKey::Named {
+                _open: input.parse()?,
+                name: input.parse()?,
+                _close: input.parse()?,
+                _eq1: input.parse()?,
+                _eq2: input.parse()?,
+            })
+        } else {
+            Ok(BNFRuleKey::Follow(input.parse()?))
+        }
     }
-    Rules
-    (NoneError)
-    <Rules>::=()
-        (|list| if let [] = list {
-            Ok(Symbol::Rules(Default::default()))
-        } else { unreachable!() })
-    <Rules>::=(<Rules> <Rule>)
-        (|list| if let [parser::Symbol::NonTerminal(Symbol::Rules(rules)), parser::Symbol::NonTerminal(Symbol::Rule(symbol, rule))] = list {
-            rules.extend(mem::take(rule).into_iter().map(|rule|(symbol.clone(), rule)));
-            Ok(Symbol::Rules(mem::take(rules)))
-        } else { unreachable!() })
-    <Rule>::=([Symbol] [Eq] <RuleItem> [Line])
-        (|list| if let [parser::Symbol::Terminal(Token::Symbol(symbol)), _, parser::Symbol::NonTerminal(Symbol::RuleItem(rule)), _] = list {
-            Ok(Symbol::Rule(symbol.clone(), vec![mem::take(rule)]))
-        } else { unreachable!() })
-    <Rule>::=(<Rule> [Or] <RuleItem> [Line])
-        (|list| if let [parser::Symbol::NonTerminal(Symbol::Rule(symbol, rules)), _, parser::Symbol::NonTerminal(Symbol::RuleItem(rule)), _] = list {
-            rules.push(mem::take(rule));
-            Ok(Symbol::Rule(mem::take(symbol), mem::take(rules)))
-        } else { unreachable!() })
-    <RuleItem>::=()
-        (|list| if let [] = list {
-            Ok(Symbol::RuleItem(vec![]))
-        } else { unreachable!() })
-    <RuleItem>::=(<RuleItem> [Token])
-        (|list| if let [parser::Symbol::NonTerminal(Symbol::RuleItem(items)), parser::Symbol::Terminal(token)] = list {
-            items.push(token.clone().into());
-            Ok(Symbol::RuleItem(mem::take(items)))
-        } else { unreachable!() })
-    <RuleItem>::=(<RuleItem> [Symbol])
-        (|list| if let [parser::Symbol::NonTerminal(Symbol::RuleItem(items)), parser::Symbol::Terminal(symbol)] = list {
-            items.push(symbol.clone().into());
-            Ok(Symbol::RuleItem(mem::take(items)))
-        } else { unreachable!() })
-    <RuleItem>::=(<RuleItem> [Error])
-        (|list| if let [parser::Symbol::NonTerminal(Symbol::RuleItem(items)), parser::Symbol::Terminal(error)] = list {
-            items.push(error.clone().into());
-            Ok(Symbol::RuleItem(mem::take(items)))
-        } else { unreachable!() })
+}
+
+struct BNFRule {
+    key: BNFRuleKey,
+    rule: Vec<BNFSymbol>,
+    _sep: Token![:],
+    _pattern: Pat,
+    _arrow: Token![=>],
+    _generator: Expr,
+    _end: Token![;],
+}
+
+impl Parse for BNFRule {
+    fn parse(input: ParseStream) -> syn::Result<Self> {
+        Ok(BNFRule {
+            key: input.parse()?,
+            rule: {
+                let mut vec = Vec::new();
+                while !input.peek(Token![:]) {
+                    vec.push(input.parse()?);
+                }
+                vec
+            },
+            _sep: input.parse()?,
+            _pattern: input.parse()?,
+            _arrow: input.parse()?,
+            _generator: input.parse()?,
+            _end: input.parse()?,
+        })
+    }
+}
+
+struct BNFRules(Vec<BNFRule>);
+
+impl Parse for BNFRules {
+    fn parse(input: ParseStream) -> syn::Result<Self> {
+        let mut rules = Vec::new();
+        while !input.is_empty() {
+            rules.push(input.parse()?);
+        }
+        Ok(BNFRules(rules))
+    }
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
-    let matches = clap::app_from_crate!()
-        .arg(
-            Arg::with_name("bnf")
-                .help("path/to/bnf_file")
-                .required(true)
-                .takes_value(true),
-        )
-        .get_matches();
+    let matches = clap::app_from_crate!().arg(Arg::with_name("bnf").help("path/to/bnf_file").required(true).takes_value(true)).get_matches();
     let bnf_path = matches.value_of("bnf").unwrap();
     let bnf = fs::read_to_string(bnf_path).expect("failed to open bnf file");
-    let rules = bnf
-        .chars()
-        .tokenize(get_tokenizer())
-        .flatten()
-        .parse(&get_parser())?;
-    let rules = if let Symbol::Rules(rules) = rules {
-        rules
-    } else {
-        unreachable!()
-    };
+    let BNFRules(rules) = syn::parse_str(&bnf)?;
+
     struct AnonymousSymbol(usize);
     impl EnumIndex for AnonymousSymbol {
         fn enum_index(&self) -> usize {
             self.0
         }
     }
-    fn map_getter(map: &mut BTreeMap<String, usize>) -> impl FnMut(&String) -> usize + '_ {
+    fn map_getter<K: Hash + Eq + Clone>(map: &mut HashMap<K, usize>) -> impl FnMut(&K) -> usize + '_ {
         move |s| {
             if let Some(result) = map.get(s) {
                 *result
@@ -206,23 +150,26 @@ fn main() -> Result<(), Box<dyn Error>> {
             }
         }
     }
-    let mut symbol_map = BTreeMap::new();
-    let mut token_map = BTreeMap::new();
+    let mut symbol_map = HashMap::new();
+    let mut token_map = HashMap::new();
     let mut get_symbol = map_getter(&mut symbol_map);
     let mut get_token = map_getter(&mut token_map);
     let mut builder = Syntax::<_, _, ()>::builder();
-    for (symbol, rule) in &rules {
-        let start = AnonymousSymbol(get_symbol(symbol));
+    let mut follow_key = None;
+    for BNFRule { key, rule, .. } in &rules {
+        let key = match key {
+            BNFRuleKey::Named { name, .. } => get_symbol(&name.to_string()),
+            BNFRuleKey::Follow(_) => follow_key.expect("above rule is not found"),
+        };
+        follow_key = Some(key);
+        let start = AnonymousSymbol(key);
         let mut rule_item = Vec::with_capacity(rule.len());
         for item in rule {
             rule_item.push(match item {
-                RuleItem::Token(token) => {
-                    parser::Symbol::Terminal(AnonymousSymbol(get_token(token)))
-                }
-                RuleItem::Symbol(symbol) => {
-                    parser::Symbol::NonTerminal(AnonymousSymbol(get_symbol(symbol)))
-                }
-                RuleItem::Error => parser::Symbol::Error(()),
+                BNFSymbol::Terminal(BNFTerminalSymbol::Named { name, .. }) => parser::Symbol::Terminal(AnonymousSymbol(get_token(&TokenKey::Named(name.to_string())))),
+                BNFSymbol::Terminal(BNFTerminalSymbol::Raw(name)) => parser::Symbol::Terminal(AnonymousSymbol(get_token(&TokenKey::Raw(name.value())))),
+                BNFSymbol::NonTerminal { name, .. } => parser::Symbol::NonTerminal(AnonymousSymbol(get_symbol(&name.to_string()))),
+                BNFSymbol::Error(_) => parser::Symbol::Error(()),
             })
         }
         builder = builder.rule(Rule::new(start, &rule_item, |_| unreachable!()));

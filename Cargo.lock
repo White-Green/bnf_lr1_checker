@@ -35,8 +35,7 @@ dependencies = [
  "clap",
  "parser",
  "parser_generator",
- "tokenizer",
- "tokenizer_generator",
+ "syn 1.0.80",
 ]
 
 [[package]]
@@ -88,7 +87,7 @@ checksum = "7b2f96d100e1cf1929e7719b7edb3b90ab5298072638fccd77be9ce942ecdfce"
 [[package]]
 name = "parser"
 version = "0.1.0"
-source = "git+https://github.com/White-Green/Yet-Another-Rust-Parser?rev=235b4e3d91dd17f085a0784d8fc5547785184ed9#235b4e3d91dd17f085a0784d8fc5547785184ed9"
+source = "git+https://github.com/White-Green/Yet-Another-Rust-Parser?rev=cb7249f9da434fe4e44a089f798ce213a9d52140#cb7249f9da434fe4e44a089f798ce213a9d52140"
 dependencies = [
  "enum_index",
  "enum_index_derive",
@@ -97,7 +96,7 @@ dependencies = [
 [[package]]
 name = "parser_generator"
 version = "0.1.0"
-source = "git+https://github.com/White-Green/Yet-Another-Rust-Parser?rev=235b4e3d91dd17f085a0784d8fc5547785184ed9#235b4e3d91dd17f085a0784d8fc5547785184ed9"
+source = "git+https://github.com/White-Green/Yet-Another-Rust-Parser?rev=cb7249f9da434fe4e44a089f798ce213a9d52140#cb7249f9da434fe4e44a089f798ce213a9d52140"
 dependencies = [
  "parser",
  "proc-macro2",
@@ -128,12 +127,6 @@ checksum = "38bc8cc6a5f2e3655e0899c1b848643b2562f853f114bfec7be120678e3ace05"
 dependencies = [
  "proc-macro2",
 ]
-
-[[package]]
-name = "regex-syntax"
-version = "0.6.25"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f497285884f3fcff424ffc933e56d7cbca511def0c9831a7f9b5f6153e3cc89b"
 
 [[package]]
 name = "strsim"
@@ -179,25 +172,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d326610f408c7a4eb6f51c37c330e496b08506c9457c9d34287ecc38809fb060"
 dependencies = [
  "unicode-width",
-]
-
-[[package]]
-name = "tokenizer"
-version = "0.1.0"
-source = "git+https://github.com/White-Green/Yet-Another-Rust-Parser?rev=235b4e3d91dd17f085a0784d8fc5547785184ed9#235b4e3d91dd17f085a0784d8fc5547785184ed9"
-dependencies = [
- "regex-syntax",
-]
-
-[[package]]
-name = "tokenizer_generator"
-version = "0.1.0"
-source = "git+https://github.com/White-Green/Yet-Another-Rust-Parser?rev=235b4e3d91dd17f085a0784d8fc5547785184ed9#235b4e3d91dd17f085a0784d8fc5547785184ed9"
-dependencies = [
- "proc-macro2",
- "quote 1.0.10",
- "syn 1.0.80",
- "tokenizer",
 ]
 
 [[package]]
